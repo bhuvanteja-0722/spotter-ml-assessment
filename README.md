@@ -1,6 +1,6 @@
 # Freight Rate Prediction Challenge
 
-This repository trains a freight-rate model, creates the required 12,000-row validation submission, and fills the fixed December forecast inputs. The reproducible run and its time-based holdout result are documented below.
+This repository trains a freight-rate model, creates the required 12,000-row validation submission, and fills the fixed December forecast inputs. The reproducible run and its expanding-window backtest are documented below.
 
 ## Setup and run
 
@@ -16,11 +16,11 @@ The training command writes `validation_predictions.csv` with exactly `load_id,p
 
 ## Validation approach
 
-The labeled development data contains 48,000 loads from January 1 through October 31, 2025. The latest full month, October (4,853 loads), is held out as a forward-looking validation set; January–September rows are used for that fit. This preserves time order and avoids random-split leakage. The October holdout scored **$125.21 MAE**, **$647.88 RMSE**, and **6.37% MAPE**. The final model is then refit using all 48,000 labeled rows before predicting the November–December validation loads.
+The labeled development data contains 48,000 loads from January 1 through October 31, 2025. Validation uses three expanding monthly folds: train through July and predict August, train through August and predict September, then train through September and predict October. This keeps each fold forward-looking. Across 14,282 out-of-fold predictions, the model scores **$103.27 MAE**, **$625.67 RMSE**, and **4.61% MAPE**. The October fold scores **5.26% MAPE**, down from 6.37% for the initial shared-feature model on that same month. The final model is refit using all 48,000 labeled rows before predicting November–December.
 
 ## Data preparation and model
 
-The target is `posted_rate`. The model uses distance, weight, date-derived calendar features, pickup, delivery, and equipment. These are the features shared by the labeled data, validation rows, and the fixed December chart inputs. `market_index`, `quote_signal`, and coordinates are deliberately excluded because the December chart file does not provide them. Missing weights are median-imputed using the training fold; unseen route names are supported by the one-hot encoder. A histogram gradient-boosting regressor is trained on `log1p(posted_rate)` and predictions are transformed back to dollars and clipped above zero.
+The target is `posted_rate`. The model uses distance, weight, date-derived calendar features, pickup, delivery, and equipment. These fields are available in training, validation, and December inputs. It also uses strictly prior average rates per mile and observation counts for the lane, lane plus equipment, pickup plus equipment, and equipment. The route history is built in date order, so each training row only uses earlier labeled loads. Nearly 99.7–99.8% of lanes in the three backtest months had appeared earlier. A histogram gradient-boosting regressor with an absolute-error objective is trained on `log1p(posted_rate / distance)`; predictions are converted back to dollars per load. Missing numeric features are median-imputed within each training fold, and unseen route categories are supported by the one-hot encoder. `market_index`, `quote_signal`, and coordinates were excluded because the December chart file lacks them; a temporal feature comparison also found those fields did not generalize as well.
 
 Data checks found 300 missing training weights (0.63%) and 374 missing training market-index values (0.78%). The latter field is not used. The training set has no duplicate rows or duplicate load IDs. The validation submission is checked against the supplied template's row count and ID order before it is saved.
 
