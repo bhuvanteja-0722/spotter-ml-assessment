@@ -1,31 +1,36 @@
-# Spotter freight-rate assessment
+# Freight Rate Prediction Challenge
 
-This repository contains a reproducible regression workflow for estimating `posted_rate` from the supplied freight-load data. It generates the validation submission, December chart input predictions, a forecast chart, and a time-ordered holdout report.
+This repository trains a freight-rate model, creates the required 12,000-row validation submission, and fills the fixed December forecast inputs. The reproducible run and its time-based holdout result are documented below.
 
-## Results
+## Setup and run
 
-The workflow reserves the latest month in `train-test.csv` as a temporal holdout before fitting the final model on all labeled rows. On the October 2025 holdout (4,853 loads), it reached **$125.21 MAE**, **$647.88 RMSE**, and **6.37% MAPE**. The metrics are recorded in [`outputs/validation-metrics.json`](outputs/validation-metrics.json). The requested validation predictions are in [`outputs/validation-predictions.csv`](outputs/validation-predictions.csv), and December predictions are in [`outputs/december-chart-predictions.csv`](outputs/december-chart-predictions.csv).
-
-The forecast chart is available at [`outputs/december-rate-forecast.png`](outputs/december-rate-forecast.png).
-
-## Run
-
-Use Python 3.10 or newer:
+Use Python 3.10 or newer. From the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
 python src/train.py
+python score.py --predictions validation_predictions.csv --december-predictions data/december_chart_inputs.csv
 ```
 
-The command reads the four provided CSVs from `data/` and writes outputs to `outputs/`. Pass `--data-dir` and `--output-dir` to use different locations.
+The training command writes `validation_predictions.csv` with exactly `load_id,predicted_rate`, fills `data/december_chart_inputs.csv`, and writes holdout metrics to `outputs/validation_metrics.json`. The scorer validates the final predictions and fixed December inputs, then creates `scorer_results/candidate_december.png`.
 
-## Modeling approach
+## Validation approach
 
-- A histogram gradient-boosting regressor models the log of the positive rate target, then converts predictions back to dollars per load.
-- Numeric inputs include distance, weight, and calendar features. Pickup, delivery, and equipment use one-hot encoding; unseen categories are supported.
-- Missing weights are imputed from the training median. The model only uses fields available in both the labeled training data and December chart input, so it does not depend on November-only market or quote fields that are absent from the chart file.
-- Validation metrics use the final calendar month in the labeled data as a forward-looking holdout. The provided validation labels are not present in the supplied files, so this is an estimate of generalization and not the hidden assessment score.
+The labeled development data contains 48,000 loads from January 1 through October 31, 2025. The latest full month, October (4,853 loads), is held out as a forward-looking validation set; January–September rows are used for that fit. This preserves time order and avoids random-split leakage. The October holdout scored **$125.21 MAE**, **$647.88 RMSE**, and **6.37% MAPE**. The final model is then refit using all 48,000 labeled rows before predicting the November–December validation loads.
 
-## Data
+## Data preparation and model
 
-The `data/` directory contains the assessment's four supplied CSV inputs. The `outputs/` directory contains generated, row-aligned predictions and the chart. The supplied validation template's `load_id` order is checked before writing the submission.
+The target is `posted_rate`. The model uses distance, weight, date-derived calendar features, pickup, delivery, and equipment. These are the features shared by the labeled data, validation rows, and the fixed December chart inputs. `market_index`, `quote_signal`, and coordinates are deliberately excluded because the December chart file does not provide them. Missing weights are median-imputed using the training fold; unseen route names are supported by the one-hot encoder. A histogram gradient-boosting regressor is trained on `log1p(posted_rate)` and predictions are transformed back to dollars and clipped above zero.
+
+Data checks found 300 missing training weights (0.63%) and 374 missing training market-index values (0.78%). The latter field is not used. The training set has no duplicate rows or duplicate load IDs. The validation submission is checked against the supplied template's row count and ID order before it is saved.
+
+## Submission files
+
+- `validation_predictions.csv` - final 12,000-row submission.
+- `data/december_chart_inputs.csv` - the 31 fixed December rows with predicted rates.
+- `scorer_results/candidate_december.png` - the fixed December chart created by the supplied scorer.
+- `outputs/assessment_report.pdf` - validation and methodology report with the scorer chart.
+- `outputs/assessment_report.docx` - editable report source.
+- `outputs/loom_walkthrough_script.md` - a timed 2–3 minute recording script.
+
+The scorer reports structural validity only; Spotter calculates the final hidden validation metric after submission.

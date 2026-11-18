@@ -5,11 +5,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
@@ -90,24 +85,6 @@ def temporal_validation(train: pd.DataFrame) -> dict[str, float]:
     }
 
 
-def create_chart(frame: pd.DataFrame, destination: Path) -> None:
-    chart = frame.copy()
-    chart["date"] = pd.to_datetime(chart["date"])
-    chart = chart.sort_values("date")
-    fig, ax = plt.subplots(figsize=(11, 5.8), constrained_layout=True)
-    ax.plot(chart["date"], chart["predicted_rate"], color="#176B87", linewidth=2.6, marker="o", markersize=4)
-    ax.fill_between(chart["date"], chart["predicted_rate"], color="#176B87", alpha=0.12)
-    ax.set_title("Forecast daily spot rate | Lexington → Fort Wayne", loc="left", fontsize=16, weight="bold", pad=14)
-    ax.set_ylabel("Predicted posted rate ($ per load)")
-    ax.set_xlabel("December 2025")
-    ax.xaxis.set_major_locator(mdates.DayLocator(interval=3))
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
-    ax.grid(axis="y", color="#DCE5E8", linewidth=0.8)
-    ax.spines[["top", "right"]].set_visible(False)
-    fig.savefig(destination, dpi=180, facecolor="white")
-    plt.close(fig)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=DATA)
@@ -115,10 +92,10 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    train = pd.read_csv(args.data_dir / "train-test.csv")
+    train = pd.read_csv(args.data_dir / "train_test.csv")
     validation = pd.read_csv(args.data_dir / "validation.csv")
-    template = pd.read_csv(args.data_dir / "validation-predictions-template.csv")
-    chart_inputs = pd.read_csv(args.data_dir / "december-chart-inputs.csv")
+    template = pd.read_csv(args.data_dir / "validation_predictions_template.csv")
+    chart_inputs = pd.read_csv(args.data_dir / "december_chart_inputs.csv")
 
     metrics = temporal_validation(train)
     final_model = make_model()
@@ -128,19 +105,19 @@ def main() -> None:
     predictions["predicted_rate"] = predictions["predicted_rate"].clip(lower=0.01).round(2)
     if len(template) != len(predictions) or not template["load_id"].equals(predictions["load_id"]):
         raise ValueError("Validation prediction rows do not match the supplied template")
-    predictions.to_csv(args.output_dir / "validation-predictions.csv", index=False)
+    submission_path = ROOT / "validation_predictions.csv"
+    predictions.to_csv(submission_path, index=False)
 
     chart_inputs["predicted_rate"] = np.expm1(final_model.predict(prepare_features(chart_inputs))).clip(min=0.01).round(2)
-    chart_inputs.to_csv(args.output_dir / "december-chart-predictions.csv", index=False)
-    create_chart(chart_inputs, args.output_dir / "december-rate-forecast.png")
-
-    with (args.output_dir / "validation-metrics.json").open("w", encoding="utf-8") as stream:
+    chart_inputs.to_csv(args.data_dir / "december_chart_inputs.csv", index=False)
+    with (args.output_dir / "validation_metrics.json").open("w", encoding="utf-8") as stream:
         import json
 
         json.dump(metrics, stream, indent=2)
         stream.write("\n")
     print(f"Temporal holdout ({metrics['holdout_month']}): MAE=${metrics['mae']:.2f}, RMSE=${metrics['rmse']:.2f}, MAPE={metrics['mape_percent']:.2f}%")
-    print(f"Wrote {len(predictions):,} validation rows and {len(chart_inputs):,} December chart rows to {args.output_dir}")
+    print(f"Wrote {len(predictions):,} validation rows to {submission_path}")
+    print(f"Wrote {len(chart_inputs):,} December chart rows to {args.data_dir / 'december_chart_inputs.csv'}")
 
 
 if __name__ == "__main__":
