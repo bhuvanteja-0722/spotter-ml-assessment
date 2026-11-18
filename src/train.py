@@ -65,13 +65,18 @@ def add_prior_training_rates(frame: pd.DataFrame) -> pd.DataFrame:
     rate_per_mile = result[TARGET] / result["distance"].replace(0, np.nan)
     for name, key in HISTORY_KEYS.items():
         grouped_rpm = rate_per_mile.groupby(result[key], sort=False)
-        result[f"hist_{name}_rpm"] = grouped_rpm.transform(
-            lambda values: values.shift().expanding(min_periods=1).mean()
+        prior_count = result.groupby(key, sort=False).cumcount().astype(float)
+        prior_sum = grouped_rpm.cumsum() - rate_per_mile
+        result[f"hist_{name}_rpm"] = prior_sum.div(prior_count.where(prior_count > 0))
+
+        # Use pandas' grouped expanding implementation instead of a Python
+        # callback per lane; this is materially faster on the assessment data.
+        shifted_rpm = grouped_rpm.shift()
+        expanding_median = shifted_rpm.groupby(result[key], sort=False).expanding(min_periods=1).median()
+        result[f"hist_{name}_rpm_median"] = (
+            expanding_median.reset_index(level=0, drop=True).reindex(result.index)
         )
-        result[f"hist_{name}_rpm_median"] = grouped_rpm.transform(
-            lambda values: values.shift().expanding(min_periods=1).median()
-        )
-        result[f"hist_{name}_count"] = result.groupby(key, sort=False).cumcount().astype(float)
+        result[f"hist_{name}_count"] = prior_count
     return result[FEATURES]
 
 
