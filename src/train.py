@@ -129,8 +129,16 @@ def summarize(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float | in
     }
 
 
-def rolling_validation(train: pd.DataFrame) -> dict[str, object]:
+def rolling_validation(
+    train: pd.DataFrame, training_features: pd.DataFrame | None = None
+) -> dict[str, object]:
     """Use three expanding monthly folds to evaluate future-month generalization."""
+    train = train.sort_values(["date", "load_id"]).reset_index(drop=True)
+    if training_features is None:
+        training_features = add_prior_training_rates(train)
+    if len(training_features) != len(train):
+        raise ValueError("Precomputed training features must align with the training rows")
+
     dates = pd.to_datetime(train["date"])
     months = sorted(dates.dt.to_period("M").unique())
     validation_months = months[-3:]
@@ -139,12 +147,12 @@ def rolling_validation(train: pd.DataFrame) -> dict[str, object]:
     all_predicted: list[np.ndarray] = []
 
     for month in validation_months:
-        fit_mask = dates.dt.to_period("M") < month
+        fit_mask = (dates.dt.to_period("M") < month).to_numpy()
         valid_mask = dates.dt.to_period("M") == month
-        fit = train.loc[fit_mask].sort_values(["date", "load_id"]).reset_index(drop=True)
+        fit = train.loc[fit_mask].reset_index(drop=True)
         valid = train.loc[valid_mask].reset_index(drop=True)
         model = make_model()
-        model.fit(add_prior_training_rates(fit), np.log(fit[TARGET] / fit["distance"]))
+        model.fit(training_features.loc[fit_mask], np.log(fit[TARGET] / fit["distance"]))
         predicted = np.exp(model.predict(add_known_history(fit, valid))) * valid["distance"].to_numpy()
         actual = valid[TARGET].to_numpy()
         predicted = np.maximum(predicted, 0.01)
@@ -174,11 +182,17 @@ def main() -> None:
     template = pd.read_csv(args.data_dir / "validation_predictions_template.csv")
     chart_inputs = pd.read_csv(args.data_dir / "december_chart_inputs.csv")
 
-    metrics = rolling_validation(train)
+    # Every labeled row's history uses only strictly earlier loads, so this
+    # feature matrix is safe to reuse in all time-ordered folds and final fit.
+    training_features = add_prior_training_rates(train)
+    metrics = rolling_validation(train, training_features)
     final_model = make_model()
-    final_model.fit(add_prior_training_rates(train), np.log(train[TARGET] / train["distance"]))
+    final_model.fit(training_features, np.log(train[TARGET] / train["distance"]))
 
-    validation_rates = np.exp(final_model.predict(add_known_history(train, validation))) * validation["distance"].to_numpy()
+    validation_rates = (
+        np.exp(final_model.predict(add_known_history(train, validation)))
+        * validation["distance"].to_numpy()
+    )
     predictions = pd.DataFrame({"load_id": validation["load_id"], "predicted_rate": np.maximum(validation_rates, 0.01)})
     predictions["predicted_rate"] = predictions["predicted_rate"].round(2)
     if len(template) != len(predictions) or not template["load_id"].equals(predictions["load_id"]):
@@ -186,7 +200,10 @@ def main() -> None:
     submission_path = ROOT / "validation_predictions.csv"
     predictions.to_csv(submission_path, index=False)
 
-    chart_rates = np.exp(final_model.predict(add_known_history(train, chart_inputs))) * chart_inputs["distance"].to_numpy()
+    chart_rates = (
+        np.exp(final_model.predict(add_known_history(train, chart_inputs)))
+        * chart_inputs["distance"].to_numpy()
+    )
     chart_inputs["predicted_rate"] = np.maximum(chart_rates, 0.01).round(2)
     chart_path = args.data_dir / "december_chart_inputs.csv"
     chart_inputs.to_csv(chart_path, index=False)
