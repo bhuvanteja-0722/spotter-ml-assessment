@@ -39,6 +39,14 @@ HISTORY_KEYS = {
     "origin_equipment": "origin_equipment_key",
     "equipment": "equipment",
 }
+MODEL_PARAMETERS = {
+    "loss": "absolute_error",
+    "learning_rate": 0.07,
+    "max_iter": 300,
+    "max_leaf_nodes": 15,
+    "l2_regularization": 1.0,
+    "random_state": 42,
+}
 
 
 def prepare_base(frame: pd.DataFrame) -> pd.DataFrame:
@@ -59,9 +67,14 @@ def prepare_base(frame: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
-def add_prior_training_rates(frame: pd.DataFrame) -> pd.DataFrame:
+def add_prior_training_rates(
+    frame: pd.DataFrame, *, already_sorted: bool = False
+) -> pd.DataFrame:
     """Add expanding historical rates using only strictly earlier labeled rows."""
-    result = prepare_base(frame).sort_values(["date", "load_id"]).copy()
+    result = prepare_base(frame)
+    if not already_sorted:
+        result = result.sort_values(["date", "load_id"])
+    result = result.copy()
     rate_per_mile = result[TARGET] / result["distance"].replace(0, np.nan)
     for name, key in HISTORY_KEYS.items():
         grouped_rpm = rate_per_mile.groupby(result[key], sort=False)
@@ -77,23 +90,37 @@ def add_prior_training_rates(frame: pd.DataFrame) -> pd.DataFrame:
             expanding_median.reset_index(level=0, drop=True).reindex(result.index)
         )
         result[f"hist_{name}_count"] = prior_count
-    return result[FEATURES]
+    return result[FEATURES].reset_index(drop=True)
 
 
 def add_known_history(history: pd.DataFrame, frame: pd.DataFrame) -> pd.DataFrame:
-    """Map historical rate aggregates from labeled history onto future rows."""
+    """Give future rows aggregates learned from labeled history."""
     prior = prepare_base(history)
     result = prepare_base(frame)
     rpm = prior[TARGET] / prior["distance"].replace(0, np.nan)
     for name, key in HISTORY_KEYS.items():
-        stats = pd.DataFrame({"group": prior[key], "rpm": rpm}).groupby("group")["rpm"].agg(["mean", "median", "count"])
+        stats = (
+            pd.DataFrame({"group": prior[key], "rpm": rpm})
+            .groupby("group", sort=False)["rpm"]
+            .agg(["mean", "median", "count"])
+        )
         result[f"hist_{name}_rpm"] = result[key].map(stats["mean"])
         result[f"hist_{name}_rpm_median"] = result[key].map(stats["median"])
         result[f"hist_{name}_count"] = result[key].map(stats["count"]).fillna(0).astype(float)
     return result[FEATURES]
 
 
+def predict_rates(
+    model: Pipeline, history: pd.DataFrame, loads: pd.DataFrame
+) -> np.ndarray:
+    """Predict dollar rates by converting predicted rate-per-mile back to dollars."""
+    features = add_known_history(history, loads)
+    predicted_rate_per_mile = np.exp(model.predict(features))
+    return np.maximum(predicted_rate_per_mile * loads["distance"].to_numpy(), 0.01)
+
+
 def make_model() -> Pipeline:
+    """Build preprocessing plus a robust, nonlinear tabular regressor."""
     preprocessing = ColumnTransformer(
         transformers=[
             ("numeric", SimpleImputer(strategy="median"), BASE_NUMERIC + HISTORY_NUMERIC),
@@ -109,14 +136,7 @@ def make_model() -> Pipeline:
         remainder="drop",
         verbose_feature_names_out=False,
     )
-    estimator = HistGradientBoostingRegressor(
-        loss="absolute_error",
-        learning_rate=0.07,
-        max_iter=300,
-        max_leaf_nodes=15,
-        l2_regularization=1.0,
-        random_state=42,
-    )
+    estimator = HistGradientBoostingRegressor(**MODEL_PARAMETERS)
     return Pipeline([("features", preprocessing), ("model", estimator)])
 
 
@@ -132,10 +152,10 @@ def summarize(actual: np.ndarray, predicted: np.ndarray) -> dict[str, float | in
 def rolling_validation(
     train: pd.DataFrame, training_features: pd.DataFrame | None = None
 ) -> dict[str, object]:
-    """Use three expanding monthly folds to evaluate future-month generalization."""
-    train = train.sort_values(["date", "load_id"]).reset_index(drop=True)
+    """Score future months; passed features must align with chronologically sorted rows."""
     if training_features is None:
-        training_features = add_prior_training_rates(train)
+        train = train.sort_values(["date", "load_id"]).reset_index(drop=True)
+        training_features = add_prior_training_rates(train, already_sorted=True)
     if len(training_features) != len(train):
         raise ValueError("Precomputed training features must align with the training rows")
 
@@ -149,13 +169,12 @@ def rolling_validation(
     for month in validation_months:
         fit_mask = (dates.dt.to_period("M") < month).to_numpy()
         valid_mask = dates.dt.to_period("M") == month
-        fit = train.loc[fit_mask].reset_index(drop=True)
-        valid = train.loc[valid_mask].reset_index(drop=True)
+        fit = train.loc[fit_mask]
+        valid = train.loc[valid_mask]
         model = make_model()
         model.fit(training_features.loc[fit_mask], np.log(fit[TARGET] / fit["distance"]))
-        predicted = np.exp(model.predict(add_known_history(fit, valid))) * valid["distance"].to_numpy()
+        predicted = predict_rates(model, fit, valid)
         actual = valid[TARGET].to_numpy()
-        predicted = np.maximum(predicted, 0.01)
         folds.append({"month": str(month), **summarize(actual, predicted)})
         all_actual.append(actual)
         all_predicted.append(predicted)
@@ -177,34 +196,31 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    train = pd.read_csv(args.data_dir / "train_test.csv").sort_values(["date", "load_id"]).reset_index(drop=True)
+    train = pd.read_csv(args.data_dir / "train_test.csv")
+    train = train.sort_values(["date", "load_id"]).reset_index(drop=True)
     validation = pd.read_csv(args.data_dir / "validation.csv")
     template = pd.read_csv(args.data_dir / "validation_predictions_template.csv")
     chart_inputs = pd.read_csv(args.data_dir / "december_chart_inputs.csv")
 
     # Every labeled row's history uses only strictly earlier loads, so this
     # feature matrix is safe to reuse in all time-ordered folds and final fit.
-    training_features = add_prior_training_rates(train)
+    training_features = add_prior_training_rates(train, already_sorted=True)
     metrics = rolling_validation(train, training_features)
     final_model = make_model()
     final_model.fit(training_features, np.log(train[TARGET] / train["distance"]))
 
-    validation_rates = (
-        np.exp(final_model.predict(add_known_history(train, validation)))
-        * validation["distance"].to_numpy()
+    validation_rates = predict_rates(final_model, train, validation)
+    predictions = pd.DataFrame(
+        {"load_id": validation["load_id"], "predicted_rate": validation_rates.round(2)}
     )
-    predictions = pd.DataFrame({"load_id": validation["load_id"], "predicted_rate": np.maximum(validation_rates, 0.01)})
-    predictions["predicted_rate"] = predictions["predicted_rate"].round(2)
     if len(template) != len(predictions) or not template["load_id"].equals(predictions["load_id"]):
         raise ValueError("Validation prediction rows do not match the supplied template")
     submission_path = ROOT / "validation_predictions.csv"
     predictions.to_csv(submission_path, index=False)
 
-    chart_rates = (
-        np.exp(final_model.predict(add_known_history(train, chart_inputs)))
-        * chart_inputs["distance"].to_numpy()
-    )
-    chart_inputs["predicted_rate"] = np.maximum(chart_rates, 0.01).round(2)
+    chart_inputs["predicted_rate"] = predict_rates(
+        final_model, train, chart_inputs
+    ).round(2)
     chart_path = args.data_dir / "december_chart_inputs.csv"
     chart_inputs.to_csv(chart_path, index=False)
 
