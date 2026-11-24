@@ -1,31 +1,31 @@
-# Assessment walkthrough narration
+# Assessment walkthrough transcript
 
-**Narration:** synthetic voice generated with macOS text-to-speech. The video is a slide walkthrough and does not include a live camera recording.
+**Voice:** External Microsoft Edge neural TTS, English (India), male Prabhat voice. Captions are timed from the speech service word-boundary data. The opening identifies this as AI narration. This is a slide video, not a camera-on Loom recording.
 
 ## Scene 1
 
-This is an AI-narrated walkthrough of my freight-rate prediction assessment. I’ll explain what is in the data, how I validated the model, and how each prediction is produced. The goal is a practical rate estimate for every future load, with a reproducible process and an honest measure of historical performance.
+This is an AI-narrated walkthrough of my freight-rate assessment. I’ll cover the data, forward validation, model, and final files. The objective is to estimate a posted rate for each future load using information available when that prediction is made.
 
 ## Scene 2
 
-The labeled development file contains forty-eight thousand loads from January through October twenty twenty-five. The final validation file contains twelve thousand loads. I found three hundred missing weights and three hundred seventy-four missing market-index values. Weight is imputed inside each training fold. Market index, quote signal, and coordinates are excluded because they are not available in the fixed December inputs. There are no duplicate training IDs. Nearly all lanes in the holdout months had earlier labeled examples.
+The development data contains forty-eight thousand loads from January through October twenty twenty-five. The final file has twelve thousand loads. Three hundred weights are missing, so I impute them within each training fold. Market index, quote signal, and coordinates are left out because they are not provided in the December inputs. There are no duplicate training IDs, and nearly all holdout lanes have earlier examples.
 
 ## Scene 3
 
-I used expanding monthly validation to mimic predicting forward in time. The first model trains through July and predicts August. The second trains through August and predicts September. The third trains through September and predicts October. Across fourteen thousand two hundred eighty-two future-month predictions, pooled mean absolute error is one hundred two dollars and twenty-three cents, and MAPE is four point five six percent. October is the hardest month, at five point one nine percent MAPE.
+To mimic predicting forward, I train through July and predict August, then train through August and predict September, and finally train through September and predict October. Across fourteen thousand two hundred eighty-two holdout predictions, pooled MAPE is four point five six percent and mean absolute error is one hundred two dollars and twenty-three cents. October is the hardest fold, at five point one nine percent MAPE.
 
 ## Scene 4
 
-The most useful history comes from earlier comparable loads. For each row, I calculate the mean and median rate per mile, and the number of prior examples, for its pickup-to-delivery lane, lane and equipment, pickup and equipment, and equipment. Each training row uses strictly earlier loads only, so its own rate and future rates cannot leak into its features. The calculations use vectorized cumulative means and grouped expanding medians.
+For each load, I calculate earlier average and median rates per mile, and prior counts, for the same lane, lane and equipment, pickup and equipment, and equipment. Training rows only see strictly earlier loads, preventing their own or future prices from leaking into the features. Efficient cumulative means and grouped medians build this history.
 
 ## Scene 5
 
-The model is histogram gradient boosting with an absolute-error objective. It learns log rate per mile from distance, weight, calendar details, route, equipment, and route-history summaries. At prediction time, I convert the model output back to a rate per mile and multiply by the load distance. This separates price intensity from shipment size and produces a dollar rate.
+The estimator is histogram gradient boosting with an absolute-error objective. It learns log rate per mile from load details, calendar information, route, equipment, and historical comparisons. At inference, the predicted rate per mile is converted back to dollars by multiplying by the load distance.
 
 ## Scene 6
 
-In the training script, prepare base creates calendar and route fields. Add prior training rates builds the point-in-time history features. Make model defines the imputation, category encoding, and regressor. Predict rates is shared by validation and final inference, so both outputs use the same conversion. The feature matrix is created once and reused across the validation folds and final fit.
+In the training script, prepare base creates date and route fields. Add prior training rates builds past-only history features. Make model defines the imputers, category encoding, and estimator. Predict rates is shared by backtesting and final inference. The feature table is computed once and reused across folds and final training.
 
 ## Scene 7
 
-Finally, the model is refit on all forty-eight thousand labeled rows. It writes a twelve-thousand-row validation file in the required ID order and fills all thirty-one December chart rows. The supplied scorer accepted both files and generated the fixed December chart shown here. The README includes the full setup and run instructions. Thank you for reviewing my assessment.
+The final model is refit on all labeled loads. It writes the twelve-thousand validation predictions in template order and fills all thirty-one December chart rows. The scorer accepted both files and created the chart shown here. The repository includes the code, README, report, predictions, chart, and this video. The GitHub link is on screen. Thank you for reviewing my assessment.

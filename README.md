@@ -81,8 +81,9 @@ The scorer checks the submission and December input structure and creates `score
 - `data/validation_predictions_template.csv` — required load IDs and output format.
 - `data/december_chart_inputs.csv` — fixed December chart rows; training fills its `predicted_rate` column.
 - `outputs/assessment_report.pdf` and `outputs/assessment_report.docx` — assessment report.
-- `outputs/assessment_walkthrough.mp4` — 2-minute-52-second AI-narrated slide walkthrough; synthetic narration is disclosed in the opening and transcript. It is not a camera-on Loom recording.
-- `outputs/assessment_walkthrough_transcript.md` — narration transcript.
-- `outputs/loom_walkthrough_script.md` — outline for a live camera-on recording if the assessment requires a personal Loom recording.
+- `outputs/assessment_walkthrough.mp4` — 2-minute-58-second slide walkthrough with external Indian-English neural TTS, timed captions, and the repository link. The opening discloses the AI narration; this is not a camera-on Loom recording.
+- `outputs/assessment_narration.mp3` — standalone narration audio.
+- `outputs/assessment_walkthrough_transcript.md` — full narration transcript and voice/caption notes.
+- `outputs/loom_walkthrough_script.md` — outline for a personal camera-on recording if the assessment requires it.
 
 The scorer requirements are listed in `requirements.txt`. The final hidden assessment result depends on Spotter's data and scoring, so the backtest and structural checks should be read as evidence about this solution, not a promise of a particular award or ranking.
